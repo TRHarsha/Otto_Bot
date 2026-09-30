@@ -1,0 +1,405 @@
+Our next test: **ESP8266 + TB6612FNG + 2 BO motors + HC-SR04**.
+
+The behavior will be:
+
+* **No obstacle within 20 cm → motors run**
+* **Hand/object ≤ 20 cm → both motors stop**
+* **Move hand away → motors start again**
+
+### Wiring
+
+**TB6612FNG → ESP8266**
+
+| TB6612FNG | ESP8266 |
+| --------- | ------- |
+| VCC       | 3.3V    |
+| GND       | GND     |
+| STBY      | D8      |
+| PWMA      | D5      |
+| AIN1      | D6      |
+| AIN2      | D7      |
+| PWMB      | D0      |
+| BIN1      | D3      |
+| BIN2      | D4      |
+
+**Motors**
+
+* A01/A02 → Left BO motor
+* B01/B02 → Right BO motor
+
+**Battery**
+
+* Battery + → **VM**
+* Battery − → **GND**
+
+**HC-SR04**
+
+| HC-SR04 | ESP8266                                |
+| ------- | -------------------------------------- |
+| VCC     | 5V/VIN                                 |
+| GND     | GND                                    |
+| TRIG    | TX / GPIO1                             |
+| ECHO    | RX / GPIO3 **through voltage divider** |
+
+For ECHO, don't put 5 V directly into the ESP8266 GPIO. Use a divider, for example:
+
+```text
+HC-SR04 ECHO
+     |
+    1kΩ
+     |
+     +------ GPIO3 / RX
+     |
+    2kΩ
+     |
+    GND
+```
+
+### Test code
+
+```cpp
+// ESP8266 + TB6612FNG + BO Motors + HC-SR04
+// Stop motors when obstacle is closer than 20 cm
+
+// LEFT MOTOR
+#define PWMA D5
+#define AIN1 D6
+#define AIN2 D7
+
+// RIGHT MOTOR
+#define PWMB D0
+#define BIN1 D3
+#define BIN2 D4
+
+// TB6612 STANDBY
+#define STBY D8
+
+// HC-SR04
+#define TRIG_PIN 1   // GPIO1 / TX
+#define ECHO_PIN 3   // GPIO3 / RX
+
+#define STOP_DISTANCE 20
+
+void setup() {
+
+  Serial.begin(115200);
+
+  // Motor pins
+  pinMode(PWMA, OUTPUT);
+  pinMode(AIN1, OUTPUT);
+  pinMode(AIN2, OUTPUT);
+
+  pinMode(PWMB, OUTPUT);
+  pinMode(BIN1, OUTPUT);
+  pinMode(BIN2, OUTPUT);
+
+  pinMode(STBY, OUTPUT);
+
+  // Ultrasonic
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  // Enable motor driver
+  digitalWrite(STBY, HIGH);
+
+  stopMotors();
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("OBSTACLE MOTOR TEST");
+  Serial.println("==============================");
+}
+
+void loop() {
+
+  float distance = getDistance();
+
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+  if (distance > 0 && distance <= STOP_DISTANCE) {
+
+    // Obstacle detected
+    Serial.println("OBSTACLE DETECTED - STOP");
+
+    stopMotors();
+
+  } else {
+
+    // No obstacle
+    Serial.println("CLEAR - MOTORS RUNNING");
+
+    leftMotor(150);
+    rightMotor(150);
+  }
+
+  delay(100);
+}
+
+
+// =================================
+// ULTRASONIC DISTANCE
+// =================================
+
+float getDistance() {
+
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+
+  if (duration == 0) {
+    return -1;
+  }
+
+  float distance = duration * 0.0343 / 2.0;
+
+  return distance;
+}
+
+
+// =================================
+// LEFT MOTOR
+// =================================
+
+void leftMotor(int speed) {
+
+  speed = constrain(speed, -255, 255);
+
+  if (speed > 0) {
+
+    digitalWrite(AIN1, HIGH);
+    digitalWrite(AIN2, LOW);
+
+    analogWrite(PWMA, speed);
+
+  } else if (speed < 0) {
+
+    digitalWrite(AIN1, LOW);
+    digitalWrite(AIN2, HIGH);
+
+    analogWrite(PWMA, -speed);
+
+  } else {
+
+    analogWrite(PWMA, 0);
+
+    digitalWrite(AIN1, LOW);
+    digitalWrite(AIN2, LOW);
+  }
+}
+
+
+// =================================
+// RIGHT MOTOR
+// =================================
+
+void rightMotor(int speed) {
+
+  speed = constrain(speed, -255, 255);
+
+  if (speed > 0) {
+
+    digitalWrite(BIN1, HIGH);
+    digitalWrite(BIN2, LOW);
+
+    analogWrite(PWMB, speed);
+
+  } else if (speed < 0) {
+
+    digitalWrite(BIN1, LOW);
+    digitalWrite(BIN2, HIGH);
+
+    analogWrite(PWMB, -speed);
+
+  } else {
+
+    analogWrite(PWMB, 0);
+
+    digitalWrite(BIN1, LOW);
+    digitalWrite(BIN2, LOW);
+  }
+}
+
+
+// =================================
+// STOP BOTH MOTORS
+// =================================
+
+void stopMotors() {
+
+  analogWrite(PWMA, 0);
+  analogWrite(PWMB, 0);
+
+  digitalWrite(AIN1, LOW);
+  digitalWrite(AIN2, LOW);
+
+  digitalWrite(BIN1, LOW);
+  digitalWrite(BIN2, LOW);
+}
+```
+
+### ⚠️ One important issue with your current pin arrangement
+
+We're using **TX/RX (GPIO1/GPIO3)** for the HC-SR04 because the NodeMCU doesn't have enough convenient GPIOs for everything.
+
+That means the ultrasonic sensor shares the ESP8266's serial pins. **Uploading the program can fail or behave strangely while the HC-SR04 is connected.**
+
+For uploading:
+
+1. Disconnect **HC-SR04 TRIG**
+2. Disconnect **HC-SR04 ECHO**
+3. Upload the program
+4. Disconnect USB if necessary
+5. Reconnect TRIG/ECHO
+6. Power the robot
+7. Test
+
+Also, because your two motors are mounted on opposite sides, if they don't both physically move the robot in the same forward direction, **don't change the wiring yet**. Tell me exactly what each motor does, and we'll correct the motor direction in software.
+
+Once this test works, we can add the **MPU6050 back in** and move toward the actual self-balancing control.
+
+Yes. In the voltage-divider diagram, the **GND at the bottom is the common GND**.
+
+For your HC-SR04 + ESP8266 setup, connect it like this:
+
+```text
+HC-SR04 ECHO
+     │
+    1 kΩ
+     │
+     ├────────→ ESP8266 RX / GPIO3
+     │
+    1 kΩ
+     │
+    1 kΩ
+     │
+     └────────→ GND
+```
+
+That **GND must be connected to the same common ground** as:
+
+* HC-SR04 GND
+* ESP8266 GND
+* TB6612FNG GND
+* Battery negative
+
+So electrically:
+
+```text
+HC-SR04 GND ─┐
+ESP8266 GND ─┤
+TB6612 GND ──┤── COMMON GND
+Battery (−) ─┘
+```
+
+**Do not connect the bottom of the voltage divider to HC-SR04 GND only while leaving ESP8266 GND separate.** Everything needs a common ground.
+
+Yes. **All three — HC-SR04, MPU6050, and TB6612FNG — can be connected to a single ESP8266 NodeMCU.** The challenge is choosing the GPIOs carefully because the ESP8266 has limited pins.
+
+For your Otto self-balancing robot, I recommend this arrangement:
+
+### Recommended pin mapping
+
+| Component     | Signal | ESP8266                                |
+| ------------- | ------ | -------------------------------------- |
+| **MPU6050**   | SDA    | **D2 / GPIO4**                         |
+|               | SCL    | **D1 / GPIO5**                         |
+| **TB6612FNG** | PWMA   | **D5 / GPIO14**                        |
+|               | AIN1   | **D6 / GPIO12**                        |
+|               | AIN2   | **D7 / GPIO13**                        |
+|               | PWMB   | **D0 / GPIO16**                        |
+|               | BIN1   | **D3 / GPIO0**                         |
+|               | BIN2   | **D4 / GPIO2**                         |
+|               | STBY   | **3.3V**                               |
+| **HC-SR04**   | TRIG   | **TX / GPIO1**                         |
+|               | ECHO   | **RX / GPIO3** through voltage divider |
+
+### Power
+
+```text
+                    ESP8266
+                  ┌──────────┐
+                  │          │
+      MPU6050 ────┤ I2C      │
+                  │          │
+    TB6612 ───────┤ GPIO     │
+                  │          │
+    HC-SR04 ──────┤ GPIO     │
+                  └──────────┘
+```
+
+**MPU6050:**
+
+```text
+VCC → 3.3V
+GND → GND
+SDA → D2
+SCL → D1
+```
+
+**TB6612FNG:**
+
+```text
+VCC  → 3.3V
+GND  → GND
+STBY → 3.3V
+
+VM   → external motor battery +
+GND  → common GND
+```
+
+**HC-SR04:**
+
+```text
+VCC  → 5V/VIN
+GND  → common GND
+TRIG → GPIO1/TX
+ECHO → voltage divider → GPIO3/RX
+```
+
+### One major consideration
+
+The problem isn't that the ESP8266 **can't** handle all three. It can.
+
+The problem is **GPIO availability**.
+
+We're using almost every usable GPIO:
+
+```text
+D0  → TB6612 PWMB
+D1  → MPU6050 SCL
+D2  → MPU6050 SDA
+D3  → TB6612 BIN1
+D4  → TB6612 BIN2
+D5  → TB6612 PWMA
+D6  → TB6612 AIN1
+D7  → TB6612 AIN2
+D8  → available / unused
+TX  → HC-SR04 TRIG
+RX  → HC-SR04 ECHO
+```
+
+This is why **STBY should be tied directly to 3.3V**, rather than consuming another GPIO.
+
+### ⚠️ For your self-balancing robot
+
+There is also a practical issue: **TX/RX are being used by the ultrasonic sensor**, so you shouldn't depend on normal `Serial.begin()` debugging while the HC-SR04 is connected.
+
+For development, we can initially test:
+
+1. **MPU6050 + Serial**
+2. **TB6612 + motors**
+3. **HC-SR04 + Serial**
+4. Then combine all three.
+5. Finally implement the **MPU6050 angle → PID → TB6612 motor control**.
+
+For the **final balancing robot**, I'd actually recommend changing the pin allocation so that we don't use TX/RX for the ultrasonic sensor. That will make debugging the PID much easier.
+
+
